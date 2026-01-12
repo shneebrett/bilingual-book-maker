@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(kiro-cli --help)",
+      "Bash(if [ -f \"$HOME/.claude/settings.json\" ])",
+      "Bash(then cat \"$HOME/.claude/settings.json\")",
+      "Bash(else echo \"配置文件不存在\")",
+      "Bash(fi)"
+    ]
+  }
+}
