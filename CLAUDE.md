@@ -164,3 +164,23 @@ docker run --rm --name bilingual_book_maker \
 - 使用 `--test` 参数只翻译前 10 段（可通过 `--test_num` 调整）
 - 集成测试位于 `tests/test_integration.py`
 - 元数据测试位于 `tests/test_epub_metadata.py`
+
+## Important Notes
+
+- **代码提交前必须运行 `black` 格式化**
+- 该工具仅用于翻译公共领域书籍，不得用于有版权的作品（参见 `disclaimer.md`）
+- 翻译完成后生成 `${book_name}_bilingual.epub` 文件
+- 中断翻译会生成 `${book_name}_bilingual_temp.epub` 临时文件，可使用 `--resume` 恢复
+- 多个 API 密钥可用逗号分隔以避免速率限制：`--openai_key key1,key2,key3`
+- 使用 `--api_base` 可以指定自定义 API 端点（如 Cloudflare Workers 或 Azure OpenAI）
+- 使用 `--translate-tags` 可以指定要翻译的 HTML 标签（默认只翻译 `<p>` 标签）
+- 使用 `--block_size` 可以合并多个段落为一个块进行翻译，提高准确性但可能破坏原始格式（必须配合 `--single_translate` 使用）
+
+## Supported Models
+
+- OpenAI: gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o, gpt-4o-mini, gpt-5-mini, o1, o1-mini, o1-preview, o3-mini
+- Anthropic: claude-2, claude-3 系列
+- Google: gemini-1.5-flash, gemini-1.5-pro
+- Alibaba: qwen-mt-turbo, qwen-mt-plus
+- DeepL: deepl, deeplfree
+- Others: google translate, caiyun, groq, xai, ollama, tencent transmart
