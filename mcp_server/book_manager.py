@@ -1,6 +1,7 @@
 """Book management for MCP server."""
 import os
 import uuid
+from datetime import datetime
 from typing import Dict, Optional
 from bs4 import BeautifulSoup
 from book_maker.loader import BOOK_LOADER_DICT
@@ -148,6 +149,42 @@ class BookManager:
             "success": True,
             "output_path": output_path,
             "file_size": f"{file_size:.2f} MB"
+        }
+
+    def get_progress(self, book_id: str) -> dict:
+        """Get translation progress."""
+        book = self.get_book(book_id)
+        if not book:
+            return {"success": False, "error": "Book not found"}
+
+        loader = book["loader"]
+        chapters = getattr(loader, "chapters", [])
+        translations = book["translations"]
+
+        total_paragraphs = sum(
+            len(getattr(ch, "paragraphs", []))
+            for ch in chapters
+        )
+
+        completed_paragraphs = sum(len(ch) for ch in translations.values())
+
+        # Find current position
+        current_chapter = 0
+        current_paragraph = 0
+        for ch_idx in sorted(translations.keys()):
+            current_chapter = ch_idx
+            current_paragraph = max(translations[ch_idx].keys()) + 1 if translations[ch_idx] else 0
+
+        return {
+            "success": True,
+            "book_path": book["path"],
+            "total_chapters": len(chapters),
+            "current_chapter": current_chapter,
+            "current_paragraph": current_paragraph,
+            "completed_paragraphs": completed_paragraphs,
+            "total_paragraphs": total_paragraphs,
+            "progress_percentage": round(completed_paragraphs / total_paragraphs * 100, 2) if total_paragraphs > 0 else 0,
+            "last_update_time": datetime.now().isoformat()
         }
 
 

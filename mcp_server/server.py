@@ -76,5 +76,21 @@ def export_bilingual_book(book_id: str, output_path: str = None) -> dict:
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+def get_progress(book_id: str) -> dict:
+    """Get translation progress.
+
+    Args:
+        book_id: Book ID
+
+    Returns:
+        Progress information
+    """
+    try:
+        return book_manager.get_progress(book_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()
