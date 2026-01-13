@@ -145,3 +145,6 @@ log/
 books/
 prompts/
 .pdm-python
+
+# Git worktrees
+.worktrees/
