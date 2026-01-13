@@ -22,5 +22,24 @@ def load_book(file_path: str, book_type: str = "epub") -> dict:
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+def get_content(book_id: str, chapter_index: int, start: int = 0, count: int = 10) -> dict:
+    """Get content from a specific chapter.
+
+    Args:
+        book_id: Book ID from load_book
+        chapter_index: Chapter index (0-based)
+        start: Starting paragraph index
+        count: Number of paragraphs to retrieve
+
+    Returns:
+        Chapter content with paragraphs
+    """
+    try:
+        return book_manager.get_content(book_id, chapter_index, start, count)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()

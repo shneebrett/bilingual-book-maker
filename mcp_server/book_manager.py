@@ -39,6 +39,39 @@ class BookManager:
         """Get book by ID."""
         return self._books.get(book_id)
 
+    def get_content(self, book_id: str, chapter_index: int, start: int = 0, count: int = 10) -> dict:
+        """Get content from a specific chapter."""
+        book = self.get_book(book_id)
+        if not book:
+            return {"success": False, "error": "Book not found"}
+
+        loader = book["loader"]
+        chapters = getattr(loader, "chapters", [])
+
+        if chapter_index >= len(chapters):
+            return {"success": False, "error": "Chapter index out of range"}
+
+        chapter = chapters[chapter_index]
+        paragraphs = getattr(chapter, "paragraphs", [])
+
+        end = min(start + count, len(paragraphs))
+        selected = paragraphs[start:end]
+
+        return {
+            "success": True,
+            "chapter_index": chapter_index,
+            "chapter_title": getattr(chapter, "title", f"Chapter {chapter_index}"),
+            "paragraphs": [
+                {
+                    "index": start + i,
+                    "text": p.get_text() if hasattr(p, "get_text") else str(p),
+                    "html": str(p)
+                }
+                for i, p in enumerate(selected)
+            ],
+            "has_more": end < len(paragraphs)
+        }
+
 
 # Global instance
 book_manager = BookManager()
