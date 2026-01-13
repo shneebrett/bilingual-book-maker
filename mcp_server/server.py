@@ -59,5 +59,22 @@ def save_translation(book_id: str, chapter_index: int, translations: list) -> di
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+def export_bilingual_book(book_id: str, output_path: str = None) -> dict:
+    """Export the bilingual book.
+
+    Args:
+        book_id: Book ID
+        output_path: Output file path (optional)
+
+    Returns:
+        Export status and file info
+    """
+    try:
+        return book_manager.export_bilingual_book(book_id, output_path)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()
