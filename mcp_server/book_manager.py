@@ -72,6 +72,35 @@ class BookManager:
             "has_more": end < len(paragraphs)
         }
 
+    def save_translation(self, book_id: str, chapter_index: int, translations: list) -> dict:
+        """Save translations for a chapter."""
+        book = self.get_book(book_id)
+        if not book:
+            return {"success": False, "error": "Book not found"}
+
+        if chapter_index not in book["translations"]:
+            book["translations"][chapter_index] = {}
+
+        for trans in translations:
+            idx = trans["index"]
+            book["translations"][chapter_index][idx] = {
+                "original": trans["original"],
+                "translation": trans["translation"]
+            }
+
+        total_translated = sum(len(ch) for ch in book["translations"].values())
+        loader = book["loader"]
+        total_paragraphs = sum(
+            len(getattr(ch, "paragraphs", []))
+            for ch in getattr(loader, "chapters", [])
+        )
+
+        return {
+            "success": True,
+            "saved_count": len(translations),
+            "progress_percentage": round(total_translated / total_paragraphs * 100, 2) if total_paragraphs > 0 else 0
+        }
+
 
 # Global instance
 book_manager = BookManager()

@@ -41,5 +41,23 @@ def get_content(book_id: str, chapter_index: int, start: int = 0, count: int = 1
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+def save_translation(book_id: str, chapter_index: int, translations: list) -> dict:
+    """Save translation results.
+
+    Args:
+        book_id: Book ID
+        chapter_index: Chapter index
+        translations: List of {index, original, translation}
+
+    Returns:
+        Save status and progress
+    """
+    try:
+        return book_manager.save_translation(book_id, chapter_index, translations)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()
