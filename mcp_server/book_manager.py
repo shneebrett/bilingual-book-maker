@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, Optional
 from bs4 import BeautifulSoup
-from book_maker.loader import BOOK_LOADER_DICT
+from mcp_server.simplified_loader import SimplifiedEPUBLoader
 
 
 class BookManager:
@@ -16,11 +16,12 @@ class BookManager:
     def load_book(self, file_path: str, book_type: str = "epub") -> dict:
         """Load a book and return metadata."""
         book_id = str(uuid.uuid4())
-        loader_class = BOOK_LOADER_DICT.get(book_type)
-        if not loader_class:
-            raise ValueError(f"Unsupported book type: {book_type}")
 
-        loader = loader_class(file_path)
+        # Currently only support EPUB
+        if book_type != "epub":
+            raise ValueError(f"Unsupported book type: {book_type}. Only 'epub' is supported.")
+
+        loader = SimplifiedEPUBLoader(file_path)
 
         self._books[book_id] = {
             "id": book_id,
@@ -33,9 +34,9 @@ class BookManager:
         return {
             "success": True,
             "book_id": book_id,
-            "title": getattr(loader, "title", "Unknown"),
-            "language": getattr(loader, "language", "unknown"),
-            "total_chapters": len(getattr(loader, "chapters", [])),
+            "title": loader.title,
+            "language": loader.language,
+            "total_chapters": len(loader.chapters),
         }
 
     def get_book(self, book_id: str) -> Optional[dict]:
@@ -49,13 +50,13 @@ class BookManager:
             return {"success": False, "error": "Book not found"}
 
         loader = book["loader"]
-        chapters = getattr(loader, "chapters", [])
+        chapters = loader.chapters
 
         if chapter_index >= len(chapters):
             return {"success": False, "error": "Chapter index out of range"}
 
         chapter = chapters[chapter_index]
-        paragraphs = getattr(chapter, "paragraphs", [])
+        paragraphs = chapter.paragraphs
 
         end = min(start + count, len(paragraphs))
         selected = paragraphs[start:end]
@@ -63,7 +64,7 @@ class BookManager:
         return {
             "success": True,
             "chapter_index": chapter_index,
-            "chapter_title": getattr(chapter, "title", f"Chapter {chapter_index}"),
+            "chapter_title": chapter.title,
             "paragraphs": [
                 {
                     "index": start + i,
@@ -93,10 +94,7 @@ class BookManager:
 
         total_translated = sum(len(ch) for ch in book["translations"].values())
         loader = book["loader"]
-        total_paragraphs = sum(
-            len(getattr(ch, "paragraphs", []))
-            for ch in getattr(loader, "chapters", [])
-        )
+        total_paragraphs = sum(len(ch.paragraphs) for ch in loader.chapters)
 
         return {
             "success": True,
@@ -158,13 +156,10 @@ class BookManager:
             return {"success": False, "error": "Book not found"}
 
         loader = book["loader"]
-        chapters = getattr(loader, "chapters", [])
+        chapters = loader.chapters
         translations = book["translations"]
 
-        total_paragraphs = sum(
-            len(getattr(ch, "paragraphs", []))
-            for ch in chapters
-        )
+        total_paragraphs = sum(len(ch.paragraphs) for ch in chapters)
 
         completed_paragraphs = sum(len(ch) for ch in translations.values())
 
