@@ -1,0 +1,8 @@
+{
+  "default_batch_size": 10,
+  "default_review_interval": 5,
+  "translation_prompt_template": "Translate the following text to {language}. Maintain the original tone and style:\n\n{text}",
+  "auto_save_interval": 1,
+  "max_retries": 3,
+  "temp_dir": ".translation_cache"
+}
