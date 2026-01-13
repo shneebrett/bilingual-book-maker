@@ -469,7 +469,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         API_KEY = options.custom_api or env.get("BBM_CUSTOM_API")
         if not API_KEY:
             raise Exception("Please provide custom translate api")
-    elif options.model in ["gemini", "geminipro"]:
+    elif options.model in ["gemini", "geminipro", "packygemini"]:
         API_KEY = options.gemini_key or env.get("BBM_GOOGLE_GEMINI_KEY")
     elif options.model == "groq":
         API_KEY = options.groq_key or env.get("BBM_GROQ_API_KEY")
