@@ -11,6 +11,7 @@ from book_maker.translator.custom_api_translator import CustomAPI
 from book_maker.translator.xai_translator import XAIClient
 from book_maker.translator.qwen_translator import QwenTranslator
 from book_maker.translator.packy_gemini_translator import PackyGemini
+from book_maker.translator.packygpt_translator import PackyGPT
 
 MODEL_DICT = {
     "openai": ChatGPTAPI,
@@ -44,5 +45,7 @@ MODEL_DICT = {
     "qwen-mt-turbo": QwenTranslator,
     "qwen-mt-plus": QwenTranslator,
     "packygemini": PackyGemini,
+    "packygpt": PackyGPT,
+    "gpt51": PackyGPT,
     # add more here
 }
