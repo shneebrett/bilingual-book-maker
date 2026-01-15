@@ -81,6 +81,11 @@ class EPUBBookLoader(BaseBookLoader):
         # Auto-save configuration
         self.auto_save_interval = 20  # Save every 20 paragraphs
         self.paragraphs_since_last_save = 0
+
+        # Parallel processing state
+        self._translation_index = 0  # Fix: Initialize translation index for parallel mode
+        self._translator_lock = Lock()  # Fix: Protect shared translator instance
+
         self.set_parallel_workers(parallel_workers)
 
         # monkey patch for # 173
@@ -651,7 +656,14 @@ class EPUBBookLoader(BaseBookLoader):
                         continue
 
                     new_p = self._extract_paragraph(copy(p))
-                    index = self._get_next_translation_index()
+
+                    # Fix: Atomically reserve index and list position
+                    with self._progress_lock:
+                        index = self._translation_index
+                        self._translation_index += 1
+                        # Reserve position in list to maintain index-content mapping
+                        if index >= len(self.p_to_save):
+                            self.p_to_save.append(None)  # Placeholder
 
                     if self.resume and index < p_to_save_len:
                         t_text = self.p_to_save[index]
@@ -664,8 +676,9 @@ class EPUBBookLoader(BaseBookLoader):
                             chapter_translated_list,
                         )
                         t_text = "" if t_text is None else t_text
+                        # Update reserved position
                         with self._progress_lock:
-                            self.p_to_save.append(t_text)
+                            self.p_to_save[index] = t_text
 
                     if isinstance(p, NavigableString):
                         translated_node = NavigableString(t_text)
@@ -703,28 +716,30 @@ class EPUBBookLoader(BaseBookLoader):
         if not translator.context_flag:
             return translator.translate(text)
 
-        # Temporarily replace global context with chapter context
-        original_context = getattr(translator, "context_list", [])
-        original_translated = getattr(translator, "context_translated_list", [])
+        # Fix: Use lock to protect context switching in parallel mode
+        with self._translator_lock:
+            # Temporarily replace global context with chapter context
+            original_context = getattr(translator, "context_list", [])
+            original_translated = getattr(translator, "context_translated_list", [])
 
-        try:
-            # Use chapter-specific context
-            translator.context_list = chapter_context_list.copy()
-            translator.context_translated_list = chapter_translated_list.copy()
+            try:
+                # Use chapter-specific context
+                translator.context_list = chapter_context_list.copy()
+                translator.context_translated_list = chapter_translated_list.copy()
 
-            # Perform translation
-            result = translator.translate(text)
+                # Perform translation
+                result = translator.translate(text)
 
-            # Update chapter context
-            chapter_context_list[:] = translator.context_list
-            chapter_translated_list[:] = translator.context_translated_list
+                # Update chapter context
+                chapter_context_list[:] = translator.context_list
+                chapter_translated_list[:] = translator.context_translated_list
 
-            return result
+                return result
 
-        finally:
-            # Restore original context
-            translator.context_list = original_context
-            translator.context_translated_list = original_translated
+            finally:
+                # Restore original context
+                translator.context_list = original_context
+                translator.context_translated_list = original_translated
 
     def _translate_paragraphs_acc_parallel(
         self,

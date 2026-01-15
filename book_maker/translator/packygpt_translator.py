@@ -8,6 +8,7 @@ import time
 import requests
 from os import environ
 from rich import print
+from threading import Lock
 
 from .base_translator import Base
 
@@ -80,6 +81,7 @@ class PackyGPT(Base):
         self.model_groups = MODEL_GROUPS
         self.current_group_index = 0
         self.current_model_index = 0
+        self._model_switch_lock = Lock()  # Fix: Protect model switching in parallel mode
 
         # Set initial group and model
         self._update_current_config()
@@ -102,23 +104,25 @@ class PackyGPT(Base):
 
     def _try_next_model(self):
         """Try next model in current group, or move to next group"""
-        current_group = self.model_groups[self.current_group_index]
+        # Fix: Protect model switching with lock
+        with self._model_switch_lock:
+            current_group = self.model_groups[self.current_group_index]
 
-        # Try next model in current group
-        if self.current_model_index < len(current_group["models"]) - 1:
-            self.current_model_index += 1
-            self._update_current_config()
-            return True
+            # Try next model in current group
+            if self.current_model_index < len(current_group["models"]) - 1:
+                self.current_model_index += 1
+                self._update_current_config()
+                return True
 
-        # Try next group
-        if self.current_group_index < len(self.model_groups) - 1:
-            self.current_group_index += 1
-            self.current_model_index = 0
-            self._update_current_config()
-            return True
+            # Try next group
+            if self.current_group_index < len(self.model_groups) - 1:
+                self.current_group_index += 1
+                self.current_model_index = 0
+                self._update_current_config()
+                return True
 
-        # No more options
-        return False
+            # No more options
+            return False
 
     def set_model_list(self, model_list):
         """Set the model to use"""
