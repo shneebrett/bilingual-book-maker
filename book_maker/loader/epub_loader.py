@@ -220,7 +220,8 @@ class EPUBBookLoader(BaseBookLoader):
 
     def _process_paragraph(self, p, new_p, index, p_to_save_len, thread_safe=False):
         if self.resume and index < p_to_save_len:
-            p.string = self.p_to_save[index]
+            # In resume mode, use saved translation without modifying original text
+            t_text = self.p_to_save[index]
         else:
             t_text = ""
             if self.batch_flag:
@@ -240,8 +241,10 @@ class EPUBBookLoader(BaseBookLoader):
                 new_p.string = t_text
                 self.p_to_save.append(new_p.text)
 
+        # Insert translation after original text
+        trans_text = t_text if (self.resume and index < p_to_save_len) else new_p.string
         self.helper.insert_trans(
-            p, new_p.string, self.translation_style, self.single_translate
+            p, trans_text, self.translation_style, self.single_translate
         )
         index += 1
 

@@ -48,7 +48,14 @@ class PackyGPT(Base):
         )
         self.temperature = temperature
         self.interval = 1
-        self.model = "gpt-5.1"
+        # Model fallback list - try GPT models first, then fall back to Claude models
+        self.model_list = [
+            "gpt-5.1", "gpt-5", "gpt-5.1-chat", "gpt-5.2-chat", "gpt-5-chat",
+            "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001",
+            "claude-opus-4-5-20251101", "claude-3-5-haiku-20241022"
+        ]
+        self.current_model_index = 0
+        self.model = self.model_list[self.current_model_index]
 
     def set_model_list(self, model_list):
         """Set the model to use"""
@@ -76,7 +83,10 @@ class PackyGPT(Base):
 
         api_key = next(self.keys)
 
-        for attempt in range(5):  # Increase to 5 attempts
+        # Allow enough attempts to try all models plus retries
+        max_attempts = len(self.model_list) + 5
+
+        for attempt in range(max_attempts):
             try:
                 prompt_text = self.prompt.format(text=text, language=self.language)
 
@@ -133,6 +143,17 @@ class PackyGPT(Base):
                         time.sleep(delay * 2)
                         delay *= exponential_base
                         continue
+
+                    # Handle model_not_found error - try fallback models
+                    if response.status_code == 503 and "model_not_found" in error_msg:
+                        if self.current_model_index < len(self.model_list) - 1:
+                            self.current_model_index += 1
+                            self.model = self.model_list[self.current_model_index]
+                            print(f"[yellow]Model not found, switching to {self.model}...[/yellow]")
+                            continue
+                        else:
+                            print(f"[red]All models failed, no more fallback options[/red]")
+
                     raise Exception(f"API error {response.status_code}: {error_msg}")
 
             except requests.exceptions.Timeout:
@@ -141,10 +162,10 @@ class PackyGPT(Base):
                 delay *= exponential_base
             except Exception as e:
                 print(f"Error on attempt {attempt + 1}: {e}")
-                if attempt < 4:  # Changed from 2 to 4
+                if attempt < max_attempts - 1:
                     time.sleep(delay)
                     delay *= exponential_base
                 else:
                     raise
 
-        raise Exception("Translation failed after 5 attempts")
+        raise Exception(f"Translation failed after {max_attempts} attempts")
