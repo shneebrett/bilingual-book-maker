@@ -16,10 +16,38 @@ PROMPT_ENV_MAP = {
     "system": "BBM_PACKYGPT_SYS_MSG",
 }
 
+# Model groups configuration - easily extensible for future groups
+# Groups are tried in order: azure (GPT) first, then aws-q (Claude) as fallback
+MODEL_GROUPS = [
+    {
+        "name": "azure",
+        "key": "sk-3EmK8sw89BeHZ0sJdQYOAQq5IiGLzc884tekMnQ9PuMpLWm5",
+        "endpoint": "https://www.packyapi.com/v1",
+        "models": [
+            "gpt-5.2-chat",
+            "gpt-5.1-chat",
+            "gpt-5.1",
+            "gpt-5-chat",
+            "gpt-5"
+        ]
+    },
+    {
+        "name": "aws-q",
+        "key": "sk-lVSvpyVQvPsJ2jVVt9JXDayinlIZB3ZoSRTMK4rZPNxLDFtg",
+        "endpoint": "https://www.packyapi.com/v1",
+        "models": [
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-5-20251101",
+            "claude-haiku-4-5-20251001"
+        ]
+    }
+]
+
 
 class PackyGPT(Base):
     """
     PackyAPI GPT translator using OpenAI-compatible API format
+    Supports multiple model groups with automatic fallback
     """
 
     DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
@@ -35,7 +63,6 @@ class PackyGPT(Base):
         **kwargs,
     ) -> None:
         super().__init__(key, language)
-        self.api_base = api_base or "https://www.packyapi.com/v1"
         self.prompt = (
             prompt_template
             or environ.get(PROMPT_ENV_MAP["user"])
@@ -48,14 +75,50 @@ class PackyGPT(Base):
         )
         self.temperature = temperature
         self.interval = 1
-        # Model fallback list - try GPT models first, then fall back to Claude models
-        self.model_list = [
-            "gpt-5.1", "gpt-5", "gpt-5.1-chat", "gpt-5.2-chat", "gpt-5-chat",
-            "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001",
-            "claude-opus-4-5-20251101", "claude-3-5-haiku-20241022"
-        ]
+
+        # Use model groups for organized fallback
+        self.model_groups = MODEL_GROUPS
+        self.current_group_index = 0
         self.current_model_index = 0
-        self.model = self.model_list[self.current_model_index]
+
+        # Set initial group and model
+        self._update_current_config()
+
+    def _update_current_config(self):
+        """Update current API configuration based on group and model indices"""
+        if self.current_group_index < len(self.model_groups):
+            current_group = self.model_groups[self.current_group_index]
+            self.api_base = current_group["endpoint"]
+            self.api_key = current_group["key"]
+            if self.current_model_index < len(current_group["models"]):
+                self.model = current_group["models"][self.current_model_index]
+            else:
+                self.model = current_group["models"][0]
+        else:
+            # Fallback to first group if index out of range
+            self.current_group_index = 0
+            self.current_model_index = 0
+            self._update_current_config()
+
+    def _try_next_model(self):
+        """Try next model in current group, or move to next group"""
+        current_group = self.model_groups[self.current_group_index]
+
+        # Try next model in current group
+        if self.current_model_index < len(current_group["models"]) - 1:
+            self.current_model_index += 1
+            self._update_current_config()
+            return True
+
+        # Try next group
+        if self.current_group_index < len(self.model_groups) - 1:
+            self.current_group_index += 1
+            self.current_model_index = 0
+            self._update_current_config()
+            return True
+
+        # No more options
+        return False
 
     def set_model_list(self, model_list):
         """Set the model to use"""
@@ -74,17 +137,16 @@ class PackyGPT(Base):
         delay = 3  # Start with 3 seconds delay
         exponential_base = 2
 
-        # Clean text for Windows console output - use encode/decode to handle all problematic chars
+        # Clean text for Windows console output
         try:
             safe_text = text.encode('gbk', errors='replace').decode('gbk')
         except:
             safe_text = text.encode('ascii', errors='replace').decode('ascii')
         print(re.sub("\n{3,}", "\n\n", safe_text))
 
-        api_key = next(self.keys)
-
-        # Allow enough attempts to try all models plus retries
-        max_attempts = len(self.model_list) + 5
+        # Calculate total models across all groups
+        total_models = sum(len(group["models"]) for group in self.model_groups)
+        max_attempts = total_models + 5  # Extra attempts for retries
 
         for attempt in range(max_attempts):
             try:
@@ -103,7 +165,7 @@ class PackyGPT(Base):
 
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": f"Bearer {self.api_key}",
                 }
 
                 response = requests.post(
@@ -144,15 +206,17 @@ class PackyGPT(Base):
                         delay *= exponential_base
                         continue
 
-                    # Handle model_not_found error - try fallback models
+                    # Handle model_not_found error - try next model/group
                     if response.status_code == 503 and "model_not_found" in error_msg:
-                        if self.current_model_index < len(self.model_list) - 1:
-                            self.current_model_index += 1
-                            self.model = self.model_list[self.current_model_index]
-                            print(f"[yellow]Model not found, switching to {self.model}...[/yellow]")
+                        current_group = self.model_groups[self.current_group_index]
+                        print(f"[yellow]Model {self.model} not found in group '{current_group['name']}'[/yellow]")
+
+                        if self._try_next_model():
+                            new_group = self.model_groups[self.current_group_index]
+                            print(f"[yellow]Switching to group '{new_group['name']}', model: {self.model}[/yellow]")
                             continue
                         else:
-                            print(f"[red]All models failed, no more fallback options[/red]")
+                            print(f"[red]All model groups exhausted, no more fallback options[/red]")
 
                     raise Exception(f"API error {response.status_code}: {error_msg}")
 

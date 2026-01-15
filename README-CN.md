@@ -111,6 +111,31 @@ bbook --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
   python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
   ```
 
+* PackyGPT
+
+  使用 [PackyAPI](https://www.packyapi.com) 提供的 GPT 和 Claude 模型进行翻译。PackyGPT 支持智能分组重试机制，当某个模型不可用时会自动切换到备用模型。
+
+  **分组重试机制**：
+  - **azure 分组**（优先）：GPT 模型（gpt-5.2-chat, gpt-5.1-chat, gpt-5.1, gpt-5-chat, gpt-5）
+  - **aws-q 分组**（备用）：Claude 模型（claude-sonnet-4-5-20250929, claude-opus-4-5-20251101, claude-haiku-4-5-20251001）
+
+  重试逻辑：
+  1. 优先尝试 azure 分组的所有 GPT 模型
+  2. 如果 azure 分组的所有模型都不可用，自动切换到 aws-q 分组的 Claude 模型
+  3. 每个分组使用独立的 API key 和 endpoint
+  4. 支持扩展：可在代码中添加更多分组
+
+  ```shell
+  # 使用 PackyGPT（会自动使用配置的 API keys）
+  python3 make_book.py --book_name test_books/animal_farm.epub --model packygpt
+
+  # 或使用环境变量
+  export BBM_PACKYGPT_API_KEY=your_key
+  python3 make_book.py --book_name test_books/animal_farm.epub --model packygpt
+  ```
+
+  **注意**：当前版本的 API keys 已内置在代码中（`book_maker/translator/packygpt_translator.py` 的 `MODEL_GROUPS` 配置），如需使用自己的 key，请修改该配置。
+
 ## 使用说明
 
 - 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书
