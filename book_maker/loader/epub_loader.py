@@ -77,7 +77,10 @@ class EPUBBookLoader(BaseBookLoader):
         self.parallel_workers = 1
         self.enable_parallel = False
         self._progress_lock = Lock()
-        self._translation_index = 0
+
+        # Auto-save configuration
+        self.auto_save_interval = 20  # Save every 20 paragraphs
+        self.paragraphs_since_last_save = 0
         self.set_parallel_workers(parallel_workers)
 
         # monkey patch for # 173
@@ -240,6 +243,18 @@ class EPUBBookLoader(BaseBookLoader):
             else:
                 new_p.string = t_text
                 self.p_to_save.append(new_p.text)
+
+            # Auto-save check (only for new translations, not resume)
+            self.paragraphs_since_last_save += 1
+            if self.paragraphs_since_last_save >= self.auto_save_interval:
+                print(f"\n[Auto-save] Saving progress ({len(self.p_to_save)} paragraphs translated)...")
+                try:
+                    self._save_progress()
+                    self._save_temp_book()
+                    self.paragraphs_since_last_save = 0
+                    print("[Auto-save] Progress saved successfully")
+                except Exception as e:
+                    print(f"[Auto-save] Warning: Save failed - {e}")
 
         # Insert translation after original text
         trans_text = t_text if (self.resume and index < p_to_save_len) else new_p.string
@@ -997,7 +1012,17 @@ class EPUBBookLoader(BaseBookLoader):
                 self._save_progress()
                 self._save_temp_book()
             sys.exit(0)
-        except Exception:
+        except Exception as e:
+            # Save progress on any exception
+            print(f"\n[Error] Exception occurred: {e}")
+            if self.accumulated_num == 1 and len(self.p_to_save) > 0:
+                print("[Auto-save] Saving progress before exit...")
+                try:
+                    self._save_progress()
+                    self._save_temp_book()
+                    print("[Auto-save] Progress saved. You can resume with --resume flag")
+                except Exception as save_error:
+                    print(f"[Auto-save] Warning: Failed to save - {save_error}")
             traceback.print_exc()
             sys.exit(0)
 
