@@ -47,5 +47,7 @@ MODEL_DICT = {
     "packygemini": PackyGemini,
     "packygpt": PackyGPT,
     "gpt51": PackyGPT,
+    "packyclaude": PackyGPT,
+    "packyclaude-sonnet-4-5": PackyGPT,
     # add more here
 }

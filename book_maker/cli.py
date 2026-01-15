@@ -184,12 +184,18 @@ def main():
         help="You can get xAI Key from  https://console.x.ai/",
     )
 
-    # for PackyGPT
+    # for PackyGPT and PackyClaude
     parser.add_argument(
         "--packygpt_key",
         dest="packygpt_key",
         type=str,
-        help="You can get PackyGPT Key from  https://www.packyapi.com",
+        help="You can get PackyGPT/PackyClaude Key from  https://www.packyapi.com",
+    )
+    parser.add_argument(
+        "--packyclaude_key",
+        dest="packyclaude_key",
+        type=str,
+        help="You can get PackyClaude Key from  https://www.packyapi.com",
     )
 
     # for Qwen
@@ -487,6 +493,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         API_KEY = options.packygpt_key or env.get("BBM_PACKYGPT_API_KEY")
         if not API_KEY:
             raise Exception("Please provide PackyGPT API key")
+    elif options.model in ["packyclaude", "packyclaude-sonnet-4-5"]:
+        API_KEY = options.packyclaude_key or env.get("BBM_PACKYCLAUDE_API_KEY")
+        if not API_KEY:
+            raise Exception("Please provide PackyClaude API key")
     elif options.model.startswith("qwen-"):
         API_KEY = options.qwen_key or env.get("BBM_QWEN_API_KEY")
     else:
@@ -632,10 +642,13 @@ So you are close to reaching the limit. You have to choose your own value, there
     if options.model == "geminipro":
         e.translate_model.set_geminipro_models()
 
-    if options.model in ("packygpt", "gpt51"):
+    if options.model in ("packygpt", "gpt51", "packyclaude", "packyclaude-sonnet-4-5"):
         e.translate_model.set_interval(options.interval)
         if options.model_list:
             e.translate_model.set_model_list(options.model_list.split(","))
+        elif options.model in ("packyclaude", "packyclaude-sonnet-4-5"):
+            # Set default Claude model
+            e.translate_model.set_model_list(["claude-sonnet-4-5-20250929"])
 
     e.make_bilingual_book()
 

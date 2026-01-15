@@ -64,14 +64,19 @@ class PackyGPT(Base):
         pass
 
     def translate(self, text):
-        delay = 1
+        delay = 3  # Start with 3 seconds delay
         exponential_base = 2
 
-        print(re.sub("\n{3,}", "\n\n", text))
+        # Clean text for Windows console output - use encode/decode to handle all problematic chars
+        try:
+            safe_text = text.encode('gbk', errors='replace').decode('gbk')
+        except:
+            safe_text = text.encode('ascii', errors='replace').decode('ascii')
+        print(re.sub("\n{3,}", "\n\n", safe_text))
 
         api_key = next(self.keys)
 
-        for attempt in range(3):
+        for attempt in range(5):  # Increase to 5 attempts
             try:
                 prompt_text = self.prompt.format(text=text, language=self.language)
 
@@ -98,14 +103,36 @@ class PackyGPT(Base):
                 if response.status_code == 200:
                     result = response.json()
                     if "choices" in result and len(result["choices"]) > 0:
-                        t_text = result["choices"][0]["message"]["content"].strip()
-                        print("[bold green]" + re.sub("\n{3,}", "\n\n", t_text) + "[/bold green]")
-                        time.sleep(self.interval)
-                        return t_text
+                        choice = result["choices"][0]
+                        finish_reason = choice.get("finish_reason")
+
+                        # Handle content filter
+                        if finish_reason == "content_filter":
+                            print(f"[yellow]Content filtered, returning original text[/yellow]")
+                            return text
+
+                        message = choice.get("message", {})
+                        if "content" in message:
+                            t_text = message["content"].strip()
+                            try:
+                                safe_output = t_text.encode('gbk', errors='replace').decode('gbk')
+                            except:
+                                safe_output = t_text.encode('ascii', errors='replace').decode('ascii')
+                            print("[bold green]" + re.sub("\n{3,}", "\n\n", safe_output) + "[/bold green]")
+                            time.sleep(self.interval)
+                            return t_text
+                        else:
+                            raise Exception(f"No content in message: {result}")
                     else:
-                        raise Exception("No choices in response")
+                        raise Exception(f"No choices in response: {result}")
                 else:
                     error_msg = response.text
+                    # Handle rate limit specifically
+                    if response.status_code == 429:
+                        print(f"[yellow]Rate limit hit on attempt {attempt + 1}, waiting {delay * 2} seconds...[/yellow]")
+                        time.sleep(delay * 2)
+                        delay *= exponential_base
+                        continue
                     raise Exception(f"API error {response.status_code}: {error_msg}")
 
             except requests.exceptions.Timeout:
@@ -114,10 +141,10 @@ class PackyGPT(Base):
                 delay *= exponential_base
             except Exception as e:
                 print(f"Error on attempt {attempt + 1}: {e}")
-                if attempt < 2:
+                if attempt < 4:  # Changed from 2 to 4
                     time.sleep(delay)
                     delay *= exponential_base
                 else:
                     raise
 
-        raise Exception("Translation failed after 3 attempts")
+        raise Exception("Translation failed after 5 attempts")
