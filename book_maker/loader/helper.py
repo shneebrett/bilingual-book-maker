@@ -1,6 +1,7 @@
 import re
 import backoff
 import logging
+import requests
 from copy import copy
 
 logging.basicConfig(level=logging.WARNING)
@@ -32,12 +33,14 @@ class EPUBBookLoaderHelper:
         if single_translate:
             p.extract()
 
+    # Fix P1: Add max_tries and filter retryable exceptions only
     @backoff.on_exception(
         backoff.expo,
-        Exception,
+        (requests.exceptions.RequestException, TimeoutError, ConnectionError),
+        max_tries=5,
         on_backoff=lambda details: logger.warning(f"retry backoff: {details}"),
         on_giveup=lambda details: logger.warning(f"retry abort: {details}"),
-        jitter=None,
+        jitter=backoff.full_jitter,
     )
     def translate_with_backoff(self, text, context_flag=False):
         return self.translate_model.translate(text, context_flag)

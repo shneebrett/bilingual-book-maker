@@ -24,13 +24,7 @@ MODEL_GROUPS = [
         "name": "azure",
         "key": "sk-3EmK8sw89BeHZ0sJdQYOAQq5IiGLzc884tekMnQ9PuMpLWm5",
         "endpoint": "https://www.packyapi.com/v1",
-        "models": [
-            "gpt-5.2-chat",
-            "gpt-5.1-chat",
-            "gpt-5.1",
-            "gpt-5-chat",
-            "gpt-5"
-        ]
+        "models": ["gpt-5.2-chat", "gpt-5.1-chat", "gpt-5.1", "gpt-5-chat", "gpt-5"],
     },
     {
         "name": "aws-q",
@@ -39,9 +33,9 @@ MODEL_GROUPS = [
         "models": [
             "claude-sonnet-4-5-20250929",
             "claude-opus-4-5-20251101",
-            "claude-haiku-4-5-20251001"
-        ]
-    }
+            "claude-haiku-4-5-20251001",
+        ],
+    },
 ]
 
 
@@ -77,11 +71,17 @@ class PackyGPT(Base):
         self.temperature = temperature
         self.interval = 1
 
+        # Context support (not implemented for PackyGPT, but needed for compatibility)
+        self.context_flag = False
+        self.context_paragraph_limit = 0
+
         # Use model groups for organized fallback
         self.model_groups = MODEL_GROUPS
         self.current_group_index = 0
         self.current_model_index = 0
-        self._model_switch_lock = Lock()  # Fix: Protect model switching in parallel mode
+        self._model_switch_lock = (
+            Lock()
+        )  # Fix: Protect model switching in parallel mode
 
         # Set initial group and model
         self._update_current_config()
@@ -143,9 +143,9 @@ class PackyGPT(Base):
 
         # Clean text for Windows console output
         try:
-            safe_text = text.encode('gbk', errors='replace').decode('gbk')
+            safe_text = text.encode("gbk", errors="replace").decode("gbk")
         except:
-            safe_text = text.encode('ascii', errors='replace').decode('ascii')
+            safe_text = text.encode("ascii", errors="replace").decode("ascii")
         print(re.sub("\n{3,}", "\n\n", safe_text))
 
         # Calculate total models across all groups
@@ -154,10 +154,16 @@ class PackyGPT(Base):
 
         for attempt in range(max_attempts):
             try:
+                # Fix: Atomically read all state to avoid race conditions
+                with self._model_switch_lock:
+                    current_model = self.model
+                    current_api_base = self.api_base
+                    current_api_key = self.api_key
+
                 prompt_text = self.prompt.format(text=text, language=self.language)
 
                 body = {
-                    "model": self.model,
+                    "model": current_model,
                     "messages": [
                         {"role": "system", "content": self.prompt_sys_msg},
                         {"role": "user", "content": prompt_text},
@@ -165,11 +171,11 @@ class PackyGPT(Base):
                     "temperature": self.temperature,
                 }
 
-                endpoint = f"{self.api_base}/chat/completions"
+                endpoint = f"{current_api_base}/chat/completions"
 
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
+                    "Authorization": f"Bearer {current_api_key}",
                 }
 
                 response = requests.post(
@@ -184,17 +190,27 @@ class PackyGPT(Base):
 
                         # Handle content filter
                         if finish_reason == "content_filter":
-                            print(f"[yellow]Content filtered, returning original text[/yellow]")
+                            print(
+                                f"[yellow]Content filtered, returning original text[/yellow]"
+                            )
                             return text
 
                         message = choice.get("message", {})
                         if "content" in message:
                             t_text = message["content"].strip()
                             try:
-                                safe_output = t_text.encode('gbk', errors='replace').decode('gbk')
+                                safe_output = t_text.encode(
+                                    "gbk", errors="replace"
+                                ).decode("gbk")
                             except:
-                                safe_output = t_text.encode('ascii', errors='replace').decode('ascii')
-                            print("[bold green]" + re.sub("\n{3,}", "\n\n", safe_output) + "[/bold green]")
+                                safe_output = t_text.encode(
+                                    "ascii", errors="replace"
+                                ).decode("ascii")
+                            print(
+                                "[bold green]"
+                                + re.sub("\n{3,}", "\n\n", safe_output)
+                                + "[/bold green]"
+                            )
                             time.sleep(self.interval)
                             return t_text
                         else:
@@ -205,22 +221,37 @@ class PackyGPT(Base):
                     error_msg = response.text
                     # Handle rate limit specifically
                     if response.status_code == 429:
-                        print(f"[yellow]Rate limit hit on attempt {attempt + 1}, waiting {delay * 2} seconds...[/yellow]")
+                        print(
+                            f"[yellow]Rate limit hit on attempt {attempt + 1}, waiting {delay * 2} seconds...[/yellow]"
+                        )
                         time.sleep(delay * 2)
                         delay *= exponential_base
                         continue
 
                     # Handle model_not_found error - try next model/group
                     if response.status_code == 503 and "model_not_found" in error_msg:
-                        current_group = self.model_groups[self.current_group_index]
-                        print(f"[yellow]Model {self.model} not found in group '{current_group['name']}'[/yellow]")
+                        with self._model_switch_lock:
+                            group_name = self.model_groups[self.current_group_index][
+                                "name"
+                            ]
+                        print(
+                            f"[yellow]Model {current_model} not found in group '{group_name}'[/yellow]"
+                        )
 
                         if self._try_next_model():
-                            new_group = self.model_groups[self.current_group_index]
-                            print(f"[yellow]Switching to group '{new_group['name']}', model: {self.model}[/yellow]")
+                            with self._model_switch_lock:
+                                new_group_name = self.model_groups[
+                                    self.current_group_index
+                                ]["name"]
+                                new_model = self.model
+                            print(
+                                f"[yellow]Switching to group '{new_group_name}', model: {new_model}[/yellow]"
+                            )
                             continue
                         else:
-                            print(f"[red]All model groups exhausted, no more fallback options[/red]")
+                            print(
+                                f"[red]All model groups exhausted, no more fallback options[/red]"
+                            )
 
                     raise Exception(f"API error {response.status_code}: {error_msg}")
 

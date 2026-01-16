@@ -1,7 +1,10 @@
+import copy as copy_module
 import os
 import pickle
+import shutil
 import string
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import copy
@@ -83,8 +86,27 @@ class EPUBBookLoader(BaseBookLoader):
         self.paragraphs_since_last_save = 0
 
         # Parallel processing state
-        self._translation_index = 0  # Fix: Initialize translation index for parallel mode
+        self._translation_index = (
+            0  # Fix: Initialize translation index for parallel mode
+        )
         self._translator_lock = Lock()  # Fix: Protect shared translator instance
+        self._results_dict = (
+            {}
+        )  # Fix P1: Use dict instead of list for thread-safe storage
+        self._results_lock = Lock()  # Fix P1: Protect results dict access
+
+        # Store translator creation parameters for creating independent instances
+        self._translator_params = {
+            "model_class": model,
+            "key": key,
+            "language": language,
+            "api_base": model_api_base,
+            "context_flag": context_flag,
+            "context_paragraph_limit": context_paragraph_limit,
+            "temperature": temperature,
+            "source_lang": source_lang,
+            "prompt_config": prompt_config,
+        }
 
         self.set_parallel_workers(parallel_workers)
 
@@ -252,7 +274,9 @@ class EPUBBookLoader(BaseBookLoader):
             # Auto-save check (only for new translations, not resume)
             self.paragraphs_since_last_save += 1
             if self.paragraphs_since_last_save >= self.auto_save_interval:
-                print(f"\n[Auto-save] Saving progress ({len(self.p_to_save)} paragraphs translated)...")
+                print(
+                    f"\n[Auto-save] Saving progress ({len(self.p_to_save)} paragraphs translated)..."
+                )
                 try:
                     self._save_progress()
                     self._save_temp_book()
@@ -601,7 +625,7 @@ class EPUBBookLoader(BaseBookLoader):
 
         if workers > 8:
             print(
-                f"⚠️  Warning: {workers} workers is quite high. Consider using 2-8 workers for optimal performance."
+                f"[Warning] {workers} workers is quite high. Consider using 2-8 workers for optimal performance."
             )
 
     def _get_next_translation_index(self):
@@ -657,16 +681,13 @@ class EPUBBookLoader(BaseBookLoader):
 
                     new_p = self._extract_paragraph(copy(p))
 
-                    # Fix: Atomically reserve index and list position
+                    # Fix P1: Atomically get index (no list placeholder needed with dict)
                     with self._progress_lock:
                         index = self._translation_index
                         self._translation_index += 1
-                        # Reserve position in list to maintain index-content mapping
-                        if index >= len(self.p_to_save):
-                            self.p_to_save.append(None)  # Placeholder
 
                     if self.resume and index < p_to_save_len:
-                        t_text = self.p_to_save[index]
+                        t_text = self._get_translation(index)
                     else:
                         # Use chapter-specific context for translation
                         t_text = self._translate_with_chapter_context(
@@ -676,9 +697,8 @@ class EPUBBookLoader(BaseBookLoader):
                             chapter_translated_list,
                         )
                         t_text = "" if t_text is None else t_text
-                        # Update reserved position
-                        with self._progress_lock:
-                            self.p_to_save[index] = t_text
+                        # Fix P1: Store in dict instead of list
+                        self._store_translation(index, t_text)
 
                     if isinstance(p, NavigableString):
                         translated_node = NavigableString(t_text)
@@ -705,41 +725,59 @@ class EPUBBookLoader(BaseBookLoader):
         return chapter_result
 
     def _create_chapter_translator(self):
-        """Create a translator instance for a specific chapter with independent context."""
-        # Return the main translator - we'll handle context at the chapter level
-        return self.translate_model
+        """Create independent translator instance for each chapter.
+
+        Fix P0: Each thread gets its own translator instance to avoid
+        state pollution and race conditions.
+        """
+        try:
+            # Try deep copy first (works for most translators)
+            new_translator = copy_module.deepcopy(self.translate_model)
+            # Reset context for the new instance
+            if hasattr(new_translator, "context_list"):
+                new_translator.context_list = []
+            if hasattr(new_translator, "context_translated_list"):
+                new_translator.context_translated_list = []
+            return new_translator
+        except Exception:
+            # Fallback: create new instance from stored parameters
+            params = self._translator_params
+            new_translator = params["model_class"](
+                params["key"],
+                params["language"],
+                api_base=params["api_base"],
+                context_flag=params["context_flag"],
+                context_paragraph_limit=params["context_paragraph_limit"],
+                temperature=params["temperature"],
+                source_lang=params["source_lang"],
+                **prompt_config_to_kwargs(params["prompt_config"]),
+            )
+            return new_translator
 
     def _translate_with_chapter_context(
         self, translator, text, chapter_context_list, chapter_translated_list
     ):
-        """Translate text with chapter-specific context management."""
+        """Translate text with chapter-specific context management.
+
+        Fix P0: Since each thread now has its own translator instance,
+        we don't need to hold the lock during the entire translation.
+        The lock is only used for context switching if needed.
+        """
         if not translator.context_flag:
             return translator.translate(text)
 
-        # Fix: Use lock to protect context switching in parallel mode
-        with self._translator_lock:
-            # Temporarily replace global context with chapter context
-            original_context = getattr(translator, "context_list", [])
-            original_translated = getattr(translator, "context_translated_list", [])
+        # Set chapter-specific context (no lock needed - translator is thread-local)
+        translator.context_list = chapter_context_list.copy()
+        translator.context_translated_list = chapter_translated_list.copy()
 
-            try:
-                # Use chapter-specific context
-                translator.context_list = chapter_context_list.copy()
-                translator.context_translated_list = chapter_translated_list.copy()
+        # Perform translation (no lock - independent instance)
+        result = translator.translate(text)
 
-                # Perform translation
-                result = translator.translate(text)
+        # Update chapter context from translator
+        chapter_context_list[:] = translator.context_list
+        chapter_translated_list[:] = translator.context_translated_list
 
-                # Update chapter context
-                chapter_context_list[:] = translator.context_list
-                chapter_translated_list[:] = translator.context_translated_list
-
-                return result
-
-            finally:
-                # Restore original context
-                translator.context_list = original_context
-                translator.context_translated_list = original_translated
+        return result
 
     def _translate_paragraphs_acc_parallel(
         self,
@@ -943,25 +981,25 @@ class EPUBBookLoader(BaseBookLoader):
                 effective_workers = min(self.parallel_workers, len(document_items))
 
                 # Parallel processing with proper accumulated_num handling
-                print(f"🚀 Parallel processing: {len(document_items)} chapters")
+                print(f"[Parallel] Processing {len(document_items)} chapters")
                 if effective_workers < self.parallel_workers:
                     print(
-                        f"📊 Optimized workers: {effective_workers} (reduced from {self.parallel_workers})"
+                        f"[Optimized] Workers: {effective_workers} (reduced from {self.parallel_workers})"
                     )
                 else:
-                    print(f"📊 Using {effective_workers} workers")
+                    print(f"[Workers] Using {effective_workers} workers")
 
                 if self.accumulated_num > 1:
                     print(
-                        f"📝 Each chapter applies accumulated_num={self.accumulated_num} independently"
+                        f"[Note] Each chapter applies accumulated_num={self.accumulated_num} independently"
                     )
 
                 if self.context_flag:
                     print(
-                        f"🔗 Context enabled: each chapter maintains independent context (limit={self.translate_model.context_paragraph_limit})"
+                        f"[Context] Enabled: each chapter maintains independent context (limit={self.translate_model.context_paragraph_limit})"
                     )
                 else:
-                    print(f"🚫 Context disabled for this translation")
+                    print(f"[Context] Disabled for this translation")
 
                 # Create a simpler progress bar for parallel processing
                 pbar.close()  # Close the original progress bar
@@ -994,16 +1032,16 @@ class EPUBBookLoader(BaseBookLoader):
                             )
 
                         except Exception as e:
-                            print(f"❌ Error processing {item.file_name}: {e}")
+                            print(f"[Error] Processing {item.file_name}: {e}")
                             new_book.add_item(item)
                             chapter_pbar.update(1)
 
                 chapter_pbar.close()
-                print(f"✅ Completed all {len(document_items)} chapters")
+                print(f"[Completed] All {len(document_items)} chapters")
             else:
                 # Sequential processing (original behavior or single chapter)
                 if len(document_items) == 1 and self.enable_parallel:
-                    print(f"📄 Single chapter detected - using sequential processing")
+                    print(f"[Sequential] Single chapter detected - using sequential processing")
 
                 for item in document_items:
                     index = self.process_item(
@@ -1030,21 +1068,78 @@ class EPUBBookLoader(BaseBookLoader):
         except Exception as e:
             # Save progress on any exception
             print(f"\n[Error] Exception occurred: {e}")
-            if self.accumulated_num == 1 and len(self.p_to_save) > 0:
+            # Fix P1: Check both dict and list for saved progress
+            has_progress = len(self.p_to_save) > 0 or len(self._results_dict) > 0
+            if self.accumulated_num == 1 and has_progress:
                 print("[Auto-save] Saving progress before exit...")
                 try:
                     self._save_progress()
                     self._save_temp_book()
-                    print("[Auto-save] Progress saved. You can resume with --resume flag")
+                    print(
+                        "[Auto-save] Progress saved. You can resume with --resume flag"
+                    )
                 except Exception as save_error:
                     print(f"[Auto-save] Warning: Failed to save - {save_error}")
             traceback.print_exc()
             sys.exit(0)
 
+    def _store_translation(self, index, text):
+        """Thread-safe method to store translation result.
+
+        Fix P1: Use dict instead of list to avoid index/placeholder issues.
+        """
+        with self._results_lock:
+            self._results_dict[index] = text
+            # Also update p_to_save for backward compatibility
+            while len(self.p_to_save) <= index:
+                self.p_to_save.append(None)
+            self.p_to_save[index] = text
+
+    def _get_translation(self, index):
+        """Thread-safe method to get translation result.
+
+        Fix P1: Support both dict and list storage for backward compatibility.
+        """
+        with self._results_lock:
+            # Try dict first, then fall back to list
+            if index in self._results_dict:
+                return self._results_dict[index]
+            if index < len(self.p_to_save):
+                return self.p_to_save[index]
+            return None
+
+    def _get_ordered_results(self):
+        """Get all translations in order as a list.
+
+        Fix P1: Convert dict to ordered list for saving/display.
+        """
+        with self._results_lock:
+            if not self._results_dict:
+                return self.p_to_save.copy()
+            max_idx = max(self._results_dict.keys()) if self._results_dict else -1
+            list_max = len(self.p_to_save) - 1
+            final_max = max(max_idx, list_max)
+            if final_max < 0:
+                return []
+            result = []
+            for i in range(final_max + 1):
+                if i in self._results_dict:
+                    result.append(self._results_dict[i])
+                elif i < len(self.p_to_save):
+                    result.append(self.p_to_save[i])
+                else:
+                    result.append("")
+            return result
+
     def load_state(self):
         try:
             with open(self.bin_path, "rb") as f:
                 self.p_to_save = pickle.load(f)
+            # Fix P1: Sync loaded list to dict for thread-safe access
+            with self._results_lock:
+                for i, text in enumerate(self.p_to_save):
+                    if text is not None:
+                        self._results_dict[i] = text
         except Exception:
             raise Exception("can not load resume file")
 
@@ -1052,7 +1147,9 @@ class EPUBBookLoader(BaseBookLoader):
         # TODO refactor this logic
         origin_book_temp = epub.read_epub(self.epub_name)
         new_temp_book = self._make_new_book(origin_book_temp)
-        p_to_save_len = len(self.p_to_save)
+        # Fix P1: Get ordered results from dict/list
+        ordered_results = self._get_ordered_results()
+        p_to_save_len = len(ordered_results)
         trans_taglist = self.translate_tags.split(",")
         index = 0
         try:
@@ -1069,11 +1166,16 @@ class EPUBBookLoader(BaseBookLoader):
                         # TODO banch of p to translate then combine
                         # PR welcome here
                         if index < p_to_save_len:
+                            saved_text = ordered_results[index]
+                            # Fix: Skip None or empty placeholders (incomplete translations)
+                            if saved_text is None or saved_text == "":
+                                index += 1
+                                continue
                             new_p = copy(p)
                             if type(p) is NavigableString:
-                                new_p = self.p_to_save[index]
+                                new_p = saved_text
                             else:
-                                new_p.string = self.p_to_save[index]
+                                new_p.string = saved_text
                             self.helper.insert_trans(
                                 p,
                                 new_p.string,
@@ -1094,8 +1196,36 @@ class EPUBBookLoader(BaseBookLoader):
             print(e)
 
     def _save_progress(self):
+        """Save progress with atomic write to prevent file corruption."""
+        temp_path = None
         try:
-            with open(self.bin_path, "wb") as f:
-                pickle.dump(self.p_to_save, f)
-        except Exception:
-            raise Exception("can not save resume file")
+            # Get directory of target file for temp file placement
+            target_dir = os.path.dirname(self.bin_path) or "."
+
+            # Fix P1: Get ordered results for saving (thread-safe)
+            data_to_save = self._get_ordered_results()
+
+            # Create temp file in same directory for atomic rename
+            fd, temp_path = tempfile.mkstemp(suffix=".bin.tmp", dir=target_dir)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(data_to_save, f)
+            except Exception:
+                os.close(fd)
+                raise
+
+            # Atomic replace (on Windows, need to remove target first)
+            if os.path.exists(self.bin_path):
+                os.replace(temp_path, self.bin_path)
+            else:
+                shutil.move(temp_path, self.bin_path)
+            temp_path = None  # Successfully moved, don't cleanup
+        except Exception as e:
+            raise Exception(f"can not save resume file: {e}")
+        finally:
+            # Cleanup temp file if it still exists
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
